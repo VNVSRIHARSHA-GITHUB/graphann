@@ -59,3 +59,16 @@ target_link_libraries(graphann_twopass_lib PUBLIC OpenMP::OpenMP_CXX)
 
 add_executable(build_twopass src/build_twopass.cpp)
 target_link_libraries(build_twopass PRIVATE graphann_twopass_lib)
+
+
+
+# ── NEW: SEARCH EXECUTABLES (ADD THIS) ────────────────────────────
+
+add_executable(search_refine src/search_refine.cpp)
+target_link_libraries(search_refine PRIVATE graphann_refine_lib)
+
+add_executable(search_multistart src/search_multistart.cpp)
+target_link_libraries(search_multistart PRIVATE graphann_multistart_lib)
+
+add_executable(search_twopass src/search_twopass.cpp)
+target_link_libraries(search_twopass PRIVATE graphann_twopass_lib)

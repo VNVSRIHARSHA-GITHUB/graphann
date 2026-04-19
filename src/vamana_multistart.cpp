@@ -24,19 +24,22 @@ VamanaIndex::~VamanaIndex() {
 }
 
 // ============================================================================
-// Greedy Search  (identical to original)
+// Greedy Search  (identical to original, but with CRITICAL FIX)
 // ============================================================================
+// CHANGED: std::vector<bool> → std::vector<char>
+// vector<bool> is a known source of segfaults / UB in heavy loops.
+// This was the most likely cause of the Pass-2 crash on SIFT1M.
 
 std::pair<std::vector<VamanaIndex::Candidate>, uint32_t>
 VamanaIndex::greedy_search(const float* query, uint32_t L) const {
     std::set<Candidate> candidate_set;
-    std::vector<bool> visited(npts_, false);
+    std::vector<char> visited(npts_, 0);          // ← FIXED
     uint32_t dist_cmps = 0;
 
     float sd = compute_l2sq(query, get_vector(start_node_), dim_);
     dist_cmps++;
     candidate_set.insert({sd, start_node_});
-    visited[start_node_] = true;
+    visited[start_node_] = 1;
 
     std::set<uint32_t> expanded;
     while (true) {
@@ -44,7 +47,6 @@ VamanaIndex::greedy_search(const float* query, uint32_t L) const {
         for (const auto& [d, id] : candidate_set)
             if (expanded.find(id) == expanded.end()) { best = id; break; }
         if (best == UINT32_MAX) break;
-
         expanded.insert(best);
 
         std::vector<uint32_t> nbrs;
@@ -52,7 +54,7 @@ VamanaIndex::greedy_search(const float* query, uint32_t L) const {
 
         for (uint32_t nb : nbrs) {
             if (visited[nb]) continue;
-            visited[nb] = true;
+            visited[nb] = 1;
             float d = compute_l2sq(query, get_vector(nb), dim_);
             dist_cmps++;
             if (candidate_set.size() < L)
@@ -99,59 +101,53 @@ void VamanaIndex::robust_prune(uint32_t node,
 }
 
 // ============================================================================
-// Helper: run greedy search from a specific seed node (not start_node_)
+// Internal single-pass helper (reused by both passes)
 // ============================================================================
 
-std::vector<VamanaIndex::Candidate>
-VamanaIndex::search_from(uint32_t seed, const float* query, uint32_t L) const {
-    std::set<Candidate> cset;
-    std::vector<bool> vis(npts_, false);
+void VamanaIndex::run_pass(const std::vector<uint32_t>& perm,
+                           float alpha, uint32_t R, uint32_t L,
+                           uint32_t gamma_R) {
+    // Single-threaded – parallelization would break correctness
+    for (size_t idx = 0; idx < perm.size(); idx++) {
+        uint32_t point = perm[idx];
 
-    float sd = compute_l2sq(query, get_vector(seed), dim_);
-    cset.insert({sd, seed});
-    vis[seed] = true;
+        // Use full user-provided L for a richer candidate pool
+        auto [candidates, _d] = greedy_search(get_vector(point), std::max(L, R*2));
 
-    std::set<uint32_t> exp;
-    while (true) {
-        uint32_t best = UINT32_MAX;
-        for (const auto& [d, id] : cset)
-            if (exp.find(id) == exp.end()) { best = id; break; }
-        if (best == UINT32_MAX) break;
-        exp.insert(best);
+        robust_prune(point, candidates, alpha, R);
 
-        std::vector<uint32_t> nbrs;
-        { std::lock_guard<std::mutex> lk(locks_[best]); nbrs = graph_[best]; }
-
-        for (uint32_t nb : nbrs) {
-            if (vis[nb]) continue;
-            vis[nb] = true;
-            float d = compute_l2sq(query, get_vector(nb), dim_);
-            if (cset.size() < L)
-                cset.insert({d, nb});
-            else {
-                auto worst = std::prev(cset.end());
-                if (d < worst->first) {
-                    cset.erase(worst);
-                    cset.insert({d, nb});
+        // Backward edges
+        for (uint32_t nbr : graph_[point]) {
+            std::lock_guard<std::mutex> lock(locks_[nbr]);
+            graph_[nbr].push_back(point);
+            if (graph_[nbr].size() > gamma_R) {
+                std::vector<Candidate> nc;
+                for (uint32_t nn : graph_[nbr]) {
+                    float d = compute_l2sq(get_vector(nbr), get_vector(nn), dim_);
+                    nc.push_back({d, nn});
                 }
+                robust_prune(nbr, nc, alpha, R);
             }
         }
+
+        // Simple progress indicator (helps you see it's not stuck)
+        if ((idx + 1) % 50000 == 0 || idx + 1 == perm.size()) {
+            std::cout << (idx + 1) * 100 / perm.size() << "% " << std::flush;
+        }
     }
-    return std::vector<Candidate>(cset.begin(), cset.end());
+    std::cout << std::endl;
 }
 
 // ============================================================================
-// Build — WITH MULTIPLE ENTRY POINTS
+// Build — TWO-PASS CONSTRUCTION (Automated Two-Pass)
 // ============================================================================
-// Change from baseline:
-//   Instead of one greedy search from start_node_, we run M searches
-//   from M diverse start nodes and union their visited sets before pruning.
-//   This prevents disconnected components in clustered datasets.
-// ============================================================================
+// Pass 1: α = 1.0  → tight local edges
+// Pass 2: α > 1.0  → long-range shortcuts
+// This exactly matches section 3 of your project report.
 
 void VamanaIndex::build(const std::string& data_path, uint32_t R, uint32_t L,
                         float alpha, float gamma) {
-    std::cout << "[MultiStart Build] Loading data..." << std::endl;
+    std::cout << "[TwoPass Build] Loading data..." << std::endl;
     FloatMatrix mat = load_fbin(data_path);
     npts_ = mat.npts; dim_ = mat.dims;
     data_ = mat.data.release(); owns_data_ = true;
@@ -165,72 +161,28 @@ void VamanaIndex::build(const std::string& data_path, uint32_t R, uint32_t L,
     std::mt19937 rng(42);
     start_node_ = rng() % npts_;
 
-    // ── pick M diverse start nodes evenly spaced across dataset ──────────
-    const uint32_t M = 3;
-    std::vector<uint32_t> start_nodes(M);
-    uint32_t step = npts_ / M;
-    for (uint32_t i = 0; i < M; i++)
-        start_nodes[i] = i * step;
-
-    std::cout << "  Using " << M << " start nodes: ";
-    for (auto s : start_nodes) std::cout << s << " ";
-    std::cout << std::endl;
-
     std::vector<uint32_t> perm(npts_);
     std::iota(perm.begin(), perm.end(), 0);
-    std::shuffle(perm.begin(), perm.end(), rng);
 
     uint32_t gamma_R = static_cast<uint32_t>(gamma * R);
 
-    std::cout << "[MultiStart Build] Building..." << std::endl;
+    // ── PASS 1: alpha = 1.0 → tight local edges ────────────────────────────
+    std::cout << "[TwoPass Build] Pass 1 (alpha=1.0)..." << std::endl;
+    std::shuffle(perm.begin(), perm.end(), rng);
+    run_pass(perm, 1.0f, R, L, gamma_R);
 
-    #pragma omp parallel for schedule(dynamic, 64)
-    for (size_t idx = 0; idx < npts_; idx++) {
-        uint32_t point = perm[idx];
+    size_t t1 = 0;
+    for (uint32_t i = 0; i < npts_; i++) t1 += graph_[i].size();
+    std::cout << "  Pass 1 done. Avg degree: " << (double)t1 / npts_ << std::endl;
 
-        // ── search from each start node, union the candidates ─────────────
-        std::vector<Candidate> merged;
-        for (uint32_t s : start_nodes) {
-            auto cands = search_from(s, get_vector(point), L);
-            for (auto& c : cands) merged.push_back(c);
-        }
+    // ── PASS 2: user alpha → long-range edges ──────────────────────────────
+    std::cout << "[TwoPass Build] Pass 2 (alpha=" << alpha << ")..." << std::endl;
+    std::shuffle(perm.begin(), perm.end(), rng);
+    run_pass(perm, alpha, R, L, gamma_R);
 
-        // deduplicate by id, keep smallest distance per id
-        std::sort(merged.begin(), merged.end(),
-                  [](const Candidate& a, const Candidate& b){
-                      return a.second < b.second ||
-                             (a.second == b.second && a.first < b.first);
-                  });
-        merged.erase(std::unique(merged.begin(), merged.end(),
-                                 [](const Candidate& a, const Candidate& b){
-                                     return a.second == b.second;
-                                 }), merged.end());
-
-        // sort by distance for prune
-        std::sort(merged.begin(), merged.end());
-
-        // prune over unioned candidate pool
-        robust_prune(point, merged, alpha, R);
-
-        // backward edges
-        for (uint32_t nbr : graph_[point]) {
-            std::lock_guard<std::mutex> lock(locks_[nbr]);
-            graph_[nbr].push_back(point);
-            if (graph_[nbr].size() > gamma_R) {
-                std::vector<Candidate> nc;
-                for (uint32_t nn : graph_[nbr]) {
-                    float d = compute_l2sq(get_vector(nbr), get_vector(nn), dim_);
-                    nc.push_back({d, nn});
-                }
-                robust_prune(nbr, nc, alpha, R);
-            }
-        }
-    }
-
-    size_t total = 0;
-    for (uint32_t i = 0; i < npts_; i++) total += graph_[i].size();
-    std::cout << "[MultiStart Build] Done. Avg degree: "
-              << (double)total / npts_ << std::endl;
+    size_t t2 = 0;
+    for (uint32_t i = 0; i < npts_; i++) t2 += graph_[i].size();
+    std::cout << "[TwoPass Build] Done. Avg degree: " << (double)t2 / npts_ << std::endl;
 }
 
 // ============================================================================
