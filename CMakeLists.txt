@@ -72,3 +72,19 @@ target_link_libraries(search_multistart PRIVATE graphann_multistart_lib)
 
 add_executable(search_twopass src/search_twopass.cpp)
 target_link_libraries(search_twopass PRIVATE graphann_twopass_lib)
+
+
+# ── Improvement 4: Beam Width ─────────────────────────────────────────────
+add_library(graphann_beam_lib STATIC
+    src/distance.cpp
+    src/io_utils.cpp
+    src/vamana_beam.cpp
+)
+target_include_directories(graphann_beam_lib PUBLIC include)
+target_link_libraries(graphann_beam_lib PUBLIC OpenMP::OpenMP_CXX)
+add_executable(build_beam src/build_beam.cpp)
+target_link_libraries(build_beam PRIVATE graphann_beam_lib)
+
+# ── BEAM SEARCH EXECUTABLE ────────────────────────────
+add_executable(search_beam src/search_beam.cpp)
+target_link_libraries(search_beam PRIVATE graphann_beam_lib)
