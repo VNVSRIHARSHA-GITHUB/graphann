@@ -76,6 +76,13 @@ class VamanaIndex {
     uint32_t npts_    = 0;
     uint32_t dim_     = 0;
     bool     owns_data_ = false;  // whether we allocated data_
+    
+    void run_pass(const std::vector<uint32_t>& perm,
+              float alpha, uint32_t R, uint32_t gamma_R);
+
+    std::vector<Candidate> search_from(uint32_t seed,
+                                   const float* query,
+                                   uint32_t L) const;
 
     // ---- Graph ----
     std::vector<std::vector<uint32_t>> graph_;  // adjacency lists
