@@ -8,7 +8,6 @@ int main(int argc, char** argv) {
     std::string data_path, output_path;
     uint32_t R = 32, L = 75;
     float alpha = 1.2f, gamma = 1.5f;
-
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if      (a == "--data"   && i+1 < argc) data_path   = argv[++i];
@@ -19,11 +18,10 @@ int main(int argc, char** argv) {
         else if (a == "--gamma"  && i+1 < argc) gamma = std::atof(argv[++i]);
     }
     if (data_path.empty() || output_path.empty()) {
-        std::cerr << "Usage: build_beam --data <f> --output <f> "
-                     "[--R 32] [--L 75] [--alpha 1.2] [--gamma 1.5]\n";
+        std::cerr << "Usage: build_rewire --data <f> --output <f>\n";
         return 1;
     }
-    std::cout << "=== Beam Build ===" << std::endl;
+    std::cout << "=== Post-Build Rewire ===" << std::endl;
     VamanaIndex index;
     Timer t;
     index.build(data_path, R, L, alpha, gamma);
