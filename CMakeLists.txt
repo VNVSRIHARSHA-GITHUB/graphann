@@ -15,9 +15,7 @@ find_package(OpenMP REQUIRED)
 # 1. Original Baseline
 # =============================================================================
 add_library(graphann_lib STATIC
-    src/distance.cpp
-    src/io_utils.cpp
-    src/vamana_index.cpp
+    src/distance.cpp src/io_utils.cpp src/vamana_index.cpp
 )
 target_include_directories(graphann_lib PUBLIC include)
 target_link_libraries(graphann_lib PUBLIC OpenMP::OpenMP_CXX)
@@ -50,7 +48,7 @@ add_executable(build_multistart src/build_multistart.cpp)
 add_executable(search_multistart src/search_multistart.cpp)
 
 # =============================================================================
-# 4. Two-Pass
+# 4. Two-Pass Construction
 # =============================================================================
 add_library(graphann_twopass_lib STATIC
     src/distance.cpp src/io_utils.cpp src/vamana_twopass.cpp
@@ -74,7 +72,7 @@ add_executable(build_beam src/build_beam.cpp)
 add_executable(search_beam src/search_beam.cpp)
 
 # =============================================================================
-# 6. Selective Backward Edges (you just added)
+# 6. Selective Backward Edges
 # =============================================================================
 add_library(graphann_selective_lib STATIC
     src/distance.cpp src/io_utils.cpp src/vamana_selective.cpp
@@ -98,7 +96,19 @@ add_executable(build_rewire src/build_rewire.cpp)
 add_executable(search_rewire src/search_rewire.cpp)
 
 # =============================================================================
-# Link all executables correctly
+# 8. Adaptive Density Pruning
+# =============================================================================
+add_library(graphann_adaptive_lib STATIC
+    src/distance.cpp src/io_utils.cpp src/vamana_adaptive.cpp
+)
+target_include_directories(graphann_adaptive_lib PUBLIC include)
+target_link_libraries(graphann_adaptive_lib PUBLIC OpenMP::OpenMP_CXX)
+
+add_executable(build_adaptive src/build_adaptive.cpp)
+add_executable(search_adaptive src/search_adaptive.cpp)
+
+# =============================================================================
+# Link all executables
 # =============================================================================
 target_link_libraries(build_index      PRIVATE graphann_lib)
 target_link_libraries(search_index     PRIVATE graphann_lib)
@@ -121,6 +131,9 @@ target_link_libraries(search_selective PRIVATE graphann_selective_lib)
 target_link_libraries(build_rewire     PRIVATE graphann_rewire_lib)
 target_link_libraries(search_rewire    PRIVATE graphann_rewire_lib)
 
+target_link_libraries(build_adaptive   PRIVATE graphann_adaptive_lib)
+target_link_libraries(search_adaptive  PRIVATE graphann_adaptive_lib)
+
 # Give all executables the include directory
 foreach(tgt 
     build_index search_index
@@ -129,6 +142,7 @@ foreach(tgt
     build_twopass search_twopass
     build_beam search_beam
     build_selective search_selective
-    build_rewire search_rewire)
+    build_rewire search_rewire
+    build_adaptive search_adaptive)
     target_include_directories(${tgt} PRIVATE include)
 endforeach()

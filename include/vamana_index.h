@@ -7,9 +7,9 @@
 
 // Result of a single query search.
 struct SearchResult {
-    std::vector<uint32_t> ids;  // nearest neighbor IDs (sorted by distance)
-    uint32_t dist_cmps;         // number of distance computations
-    double latency_us;          // search latency in microseconds
+    std::vector<uint32_t> ids;      // nearest neighbor IDs (sorted by distance)
+    uint32_t dist_cmps;             // number of distance computations
+    double latency_us;              // search latency in microseconds
 };
 
 // Vamana graph-based approximate nearest neighbor index.
@@ -37,24 +37,24 @@ private:
     using Candidate = std::pair<float, uint32_t>;
 
     // ---- Core algorithms ----
-
-    // Greedy search starting from start_node_.
     std::pair<std::vector<Candidate>, uint32_t>
     greedy_search(const float* query, uint32_t L) const;
 
-    // Alpha-RNG pruning.
     void robust_prune(uint32_t node, std::vector<Candidate>& candidates,
                       float alpha, uint32_t R);
 
-    // Helper used by Multi-Start, Two-Pass, Beam, etc.
     std::vector<Candidate> search_from(uint32_t seed,
                                        const float* query,
                                        uint32_t L) const;
 
-    // Helper used by Two-Pass and other multi-pass builds.
     void run_pass(const std::vector<uint32_t>& perm,
                   float alpha, uint32_t R, uint32_t L,
                   uint32_t gamma_R);
+
+    // ---- Improvement 6: Local-Density Adaptive Pruning ----
+    float compute_rho(uint32_t point_id, uint32_t k);
+    std::vector<float> densities_;   // ρ(p) for each point
+    float max_rho_ = 0.0f;           // global max density
 
     // ---- Data ----
     float*   data_      = nullptr;
